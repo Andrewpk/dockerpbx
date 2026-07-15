@@ -7,9 +7,16 @@ services:
         FREEPBX_DB_PASS: ${FREEPBX_DB_PASS:?set FREEPBX_DB_PASS in .env}
         APACHE_PORT: ${APACHE_PORT:-8080}
         PBX_HOSTNAME: ${PBX_HOSTNAME:-pbx.home.arpa}
+        TZ: ${TZ:-Atlantic/Reykjavik}
     image: freepbx-arm64:local
     container_name: freepbx
     restart: unless-stopped
+
+    # The asterisk artifact the installer downloads is arm64-only. Making the
+    # platform explicit turns a build on an amd64 box into an immediate, honest
+    # error (or a qemu build, if binfmt is set up) instead of a 20-minute build
+    # that dies when arm64 binaries won't exec. Build this on the Pi.
+    platform: linux/arm64
 
     # SIP and RTP need real source addresses. Bridge networking breaks IP-based
     # trunk auth, breaks rtp_symmetric, and makes every fail2ban ban hit the
@@ -24,7 +31,10 @@ services:
     privileged: true
     cgroup: host
     stop_signal: SIGRTMIN+3
-    stop_grace_period: 30s
+    # asterisk.service alone is allowed 30s to stop gracefully, and mariadb
+    # still has to flush to an SD card after that. 30s here would let Docker
+    # SIGKILL systemd mid-shutdown and hand mariadb a dirty datadir.
+    stop_grace_period: 90s
 
     environment:
       TZ: ${TZ:-Atlantic/Reykjavik}
@@ -46,6 +56,9 @@ services:
       - freepbx_spool:/var/spool/asterisk
       - freepbx_www:/var/www/html
       - freepbx_logs:/var/log/asterisk
+      # FreePBX schedules maintenance/backup jobs in the asterisk user's
+      # crontab. Baked entries seed the volume; runtime changes survive.
+      - freepbx_cron:/var/spool/cron
 
 volumes:
   freepbx_mysql:
@@ -54,3 +67,4 @@ volumes:
   freepbx_spool:
   freepbx_www:
   freepbx_logs:
+  freepbx_cron:

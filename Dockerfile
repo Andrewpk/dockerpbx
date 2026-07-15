@@ -21,6 +21,10 @@ ARG APACHE_PORT=8080
 # Used for postfix's mailname and the FreePBX vhost.
 ARG PBX_HOSTNAME=pbx.home.arpa
 
+# Baked into the image. A TZ env var on the container does not reliably reach
+# services under systemd; /etc/localtime does.
+ARG TZ=Etc/UTC
+
 ENV DEBIAN_FRONTEND=noninteractive \
     container=docker \
     TERM=xterm \
@@ -29,11 +33,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # --------------------------------------------------------------------------
 # Base image + systemd
 # --------------------------------------------------------------------------
+# cron and logrotate are preinstalled on the Raspberry Pi OS the installer
+# targets, but absent from debian:12. FreePBX registers crontab entries during
+# its install (needs the crontab binary at build time), and asterisk's logs
+# need rotating at runtime.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       systemd systemd-sysv dbus \
       ca-certificates wget curl gnupg \
       procps psmisc iproute2 less \
+      cron logrotate \
  && rm -rf /var/lib/apt/lists/*
 
 # --------------------------------------------------------------------------
@@ -54,7 +63,9 @@ RUN chmod +x /usr/local/bin/systemctl-shim.sh \
 # postfix is preseeded from `hostname -f`, which inside a build container is a
 # random hex string. Set it before the installer runs.
 RUN echo "${PBX_HOSTNAME}" > /etc/mailname \
- && echo "${PBX_HOSTNAME}" > /etc/hostname
+ && echo "${PBX_HOSTNAME}" > /etc/hostname \
+ && ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime \
+ && echo "${TZ}" > /etc/timezone
 
 # --------------------------------------------------------------------------
 # Run the installer.
@@ -69,6 +80,16 @@ ADD https://raw.githubusercontent.com/slythel2/freepbx-arm64-install/${INSTALLER
 RUN set -eux; \
     test -n "${FREEPBX_DB_PASS}" || { echo "FREEPBX_DB_PASS build-arg is required"; exit 1; }; \
     chmod +x /tmp/install.sh; \
+    \
+    # ---- neuter configure_swap. It runs `swapon` and a bare `sysctl`, both -- \
+    # ---- EPERM in an unprivileged build container; under the script's set -e  \
+    # ---- that kills the build on any host with <512MB swap and <=4GB RAM ---- \
+    # ---- (i.e. most Pis). It would also dd a 1-2GB /swapfile into this layer. \
+    # ---- The host owns swap, like time. grep first so a future INSTALLER_REF  \
+    # ---- that renames the function fails loudly instead of regressing. ------ \
+    grep -q '^configure_swap() {' /tmp/install.sh; \
+    sed -i 's/^configure_swap() {/configure_swap() { return 0;/' /tmp/install.sh; \
+    \
     bash /tmp/install.sh --skipversion --nochrony; \
     \
     # ---- pin the FreePBX DB password (installer randomised it) ------------- \
@@ -106,6 +127,25 @@ RUN rm -f /usr/bin/systemctl \
 RUN sed -i "s/^Listen 80$/Listen ${APACHE_PORT}/" /etc/apache2/ports.conf \
  && sed -i "s|<VirtualHost \*:80>|<VirtualHost *:${APACHE_PORT}>|" \
       /etc/apache2/sites-available/freepbx.conf
+
+# --------------------------------------------------------------------------
+# The installer preseeds postfix's mailname from `hostname -f`, which inside
+# the build is "buildkitsandbox" -- clobbering the /etc/mailname written above.
+# Put it back so voicemail email leaves with a sane origin.
+# --------------------------------------------------------------------------
+RUN echo "${PBX_HOSTNAME}" > /etc/mailname \
+ && postconf -e "myhostname = ${PBX_HOSTNAME}"
+
+# --------------------------------------------------------------------------
+# /run is a fresh tmpfs at runtime (see compose), and asterisk.service runs as
+# User=asterisk. Asterisk only creates its own run dir when it starts as root
+# and drops privileges itself (asterisk.c: "before we drop privileges") -- as
+# a plain user it can't mkdir /run/asterisk, and the CLI socket (which the
+# HEALTHCHECK depends on) never appears. Let systemd create it instead.
+# --------------------------------------------------------------------------
+RUN mkdir -p /etc/systemd/system/asterisk.service.d \
+ && printf '[Service]\nRuntimeDirectory=asterisk\nRuntimeDirectoryMode=0755\n' \
+      > /etc/systemd/system/asterisk.service.d/10-runtime-dir.conf
 
 # --------------------------------------------------------------------------
 # systemd hygiene. Done with symlinks rather than `systemctl mask`, which wants
