@@ -1,0 +1,56 @@
+services:
+  freepbx:
+    build:
+      context: .
+      args:
+        INSTALLER_REF: ${INSTALLER_REF:?pin to a commit SHA in .env}
+        FREEPBX_DB_PASS: ${FREEPBX_DB_PASS:?set FREEPBX_DB_PASS in .env}
+        APACHE_PORT: ${APACHE_PORT:-8080}
+        PBX_HOSTNAME: ${PBX_HOSTNAME:-pbx.home.arpa}
+    image: freepbx-arm64:local
+    container_name: freepbx
+    restart: unless-stopped
+
+    # SIP and RTP need real source addresses. Bridge networking breaks IP-based
+    # trunk auth, breaks rtp_symmetric, and makes every fail2ban ban hit the
+    # docker gateway instead of the attacker. Non-negotiable.
+    #
+    # NOTE: you cannot also set `hostname:` while network_mode is host -- Docker
+    # rejects the combination. The container inherits the Pi's hostname.
+    network_mode: host
+
+    # systemd as PID 1 needs this. Combined with host networking, be honest with
+    # yourself about what this is: a VM with extra steps.
+    privileged: true
+    cgroup: host
+    stop_signal: SIGRTMIN+3
+    stop_grace_period: 30s
+
+    environment:
+      TZ: ${TZ:-Atlantic/Reykjavik}
+
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+
+    volumes:
+      # Named volumes, NOT bind mounts. Docker seeds an empty named volume from
+      # the image's contents at that path on first run -- which is exactly how
+      # the installed FreePBX + populated MariaDB datadir get out of the image
+      # and into persistent storage. Bind mounts do NOT do this and would shadow
+      # the install with an empty directory.
+      - freepbx_mysql:/var/lib/mysql
+      - freepbx_etc:/etc/asterisk
+      - freepbx_lib:/var/lib/asterisk
+      - freepbx_spool:/var/spool/asterisk
+      - freepbx_www:/var/www/html
+      - freepbx_logs:/var/log/asterisk
+
+volumes:
+  freepbx_mysql:
+  freepbx_etc:
+  freepbx_lib:
+  freepbx_spool:
+  freepbx_www:
+  freepbx_logs:
