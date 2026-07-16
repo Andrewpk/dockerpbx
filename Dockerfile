@@ -90,7 +90,17 @@ RUN set -eux; \
     grep -q '^configure_swap() {' /tmp/install.sh; \
     sed -i 's/^configure_swap() {/configure_swap() { return 0;/' /tmp/install.sh; \
     \
-    bash /tmp/install.sh --skipversion --nochrony; \
+    # ---- on failure, dump the installer's logs into the build output. The --- \
+    # ---- script does `exec 2>>$LOG_FILE`, so the real error is in a file ---- \
+    # ---- that dies with the failed build, not on your terminal. ------------- \
+    bash /tmp/install.sh --skipversion --nochrony || { \
+      ec=$?; \
+      echo "==== install.sh failed (exit $ec); tail of /var/log/pbx ===="; \
+      tail -n 300 /var/log/pbx/*.log 2>/dev/null || true; \
+      echo "==== tail of FreePBX core install log (if it got that far) ===="; \
+      tail -n 100 /tmp/freepbx_install.log 2>/dev/null || true; \
+      exit "$ec"; \
+    }; \
     \
     # ---- pin the FreePBX DB password (installer randomised it) ------------- \
     mysql -u root -e "ALTER USER 'asterisk'@'localhost' IDENTIFIED BY '${FREEPBX_DB_PASS}'; \

@@ -60,8 +60,10 @@ start_unit() {
       return 1
       ;;
     apache2)
-      # shellcheck disable=SC1091
-      . /etc/apache2/envvars 2>/dev/null || true
+      # Do NOT source /etc/apache2/envvars here: its first lines expand the
+      # unset ${APACHE_CONFDIR}, and under this script's `set -u` an expansion
+      # error aborts the whole shell -- `|| true` cannot catch it. apache2ctl
+      # sources envvars itself (via /bin/sh, no set -u), so it isn't needed.
       mkdir -p /var/run/apache2
       apache2ctl -k restart >/dev/null 2>&1 || apache2ctl -k start >/dev/null 2>&1 || true
       return 0
