@@ -1,13 +1,11 @@
 services:
   freepbx:
-    build:
-      context: .
-      args:
-        INSTALLER_REF: ${INSTALLER_REF:?pin to a commit SHA in .env}
-        FREEPBX_DB_PASS: ${FREEPBX_DB_PASS:?set FREEPBX_DB_PASS in .env}
-        APACHE_PORT: ${APACHE_PORT:-8080}
-        PBX_HOSTNAME: ${PBX_HOSTNAME:-pbx.home.arpa}
-        TZ: ${TZ:-Atlantic/Reykjavik}
+    # NO build: block here on purpose. This image takes ~22 minutes to build
+    # (the FreePBX installer downloads and installs ~60 modules), which always
+    # exceeds Portainer's stack-deploy timeout -- you get DeadlineExceeded.
+    # Build it manually on the Pi with ./build.sh, THEN deploy this stack; with
+    # no build: block, Portainer just runs the pre-built image and comes up in
+    # seconds. See build.sh for the build args (INSTALLER_REF, FREEPBX_DB_PASS).
     image: freepbx-arm64:local
     container_name: freepbx
     restart: unless-stopped
