@@ -90,6 +90,11 @@ RUN set -eux; \
     grep -q '^configure_swap() {' /tmp/install.sh; \
     sed -i 's/^configure_swap() {/configure_swap() { return 0;/' /tmp/install.sh; \
     \
+    # ---- the installer writes a DAHDI stub into /etc/modprobe.d without ----- \
+    # ---- mkdir. The dir comes from kmod, present on Pi OS but not in the ---- \
+    # ---- debian:12 image; the failed redirect kills the script (set -e). ---- \
+    mkdir -p /etc/modprobe.d; \
+    \
     # ---- on failure, dump the installer's logs into the build output. The --- \
     # ---- script does `exec 2>>$LOG_FILE`, so the real error is in a file ---- \
     # ---- that dies with the failed build, not on your terminal. ------------- \
